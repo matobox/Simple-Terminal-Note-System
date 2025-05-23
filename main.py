@@ -1,14 +1,24 @@
 import tkinter as tk
 import os
+import sys
 import time
 import datetime
 import json
 from collections import defaultdict
 from PIL import Image, ImageDraw, ImageTk
 
-NOTES_DIR = "notes"
+# Déterminer le chemin de base de l'application
+if getattr(sys, 'frozen', False):
+    # Si l'app est packagée avec PyInstaller
+    application_path = os.path.dirname(sys.executable)
+else:
+    # Si l'app est exécutée comme script Python
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+# Utiliser des chemins absolus basés sur l'emplacement de l'application
+NOTES_DIR = os.path.join(application_path, "notes")
 VERSION = "1.0"
-FAVORITES_FILE = "favorites.json"
+FAVORITES_FILE = os.path.join(application_path, "favorites.json")
 
 # Couleurs Fallout authentiques
 TERMINAL_BG = "#0F0F0F"  # Noir légèrement adouci
@@ -132,6 +142,7 @@ class TerminalNotesApp:
         self.current_index = 0 if self.notes else -1
         self.save_job = None
         self.favorites = set()  # Ensemble pour stocker les notes favorites
+        self.visual_to_index = []  # Mapping de l'ordre visuel vers les indices dans self.notes
 
         # Charger les favoris
         self.load_favorites()
@@ -366,6 +377,10 @@ class TerminalNotesApp:
         lines.append("** NOTES DISPONIBLES **")
         lines.append("")
 
+        # Réinitialiser le mapping visuel
+        self.visual_to_index = []
+        visual_position = 0  # Position visuelle courante
+
         if self.notes:
             # Grouper les notes par date de modification
             notes_by_date = defaultdict(list)
@@ -400,10 +415,16 @@ class TerminalNotesApp:
                 for note in valid_favorites:
                     i = self.notes.index(note)
                     name = note.replace(".txt", "")
+
+                    # Ajouter au mapping visuel
+                    self.visual_to_index.append(i)
+
                     if i == self.current_index:
                         lines.append(f"[ ★ {name} ]")  # Note favorite sélectionnée
                     else:
                         lines.append(f"  ★ {name}  ")  # Note favorite non sélectionnée
+
+                    visual_position += 1
 
                 lines.append("")  # Espace après les favoris
 
@@ -424,11 +445,16 @@ class TerminalNotesApp:
                     if note in self.favorites:
                         continue
 
+                    # Ajouter au mapping visuel
+                    self.visual_to_index.append(i)
+
                     name = note.replace(".txt", "")
                     if i == self.current_index:
                         lines.append(f"[ {name} ]")  # Note sélectionnée entre crochets
                     else:
                         lines.append(f"  {name}  ")  # Note non sélectionnée avec espaces
+
+                    visual_position += 1
 
                 # Ajouter un espace entre les groupes de dates
                 lines.append("")
@@ -499,17 +525,50 @@ class TerminalNotesApp:
         self.bind_menu_keys()
 
 
+    def get_visual_position(self):
+        """Retourne la position visuelle de la note actuellement sélectionnée"""
+        if not self.notes or self.current_index < 0:
+            return -1
+
+        try:
+            return self.visual_to_index.index(self.current_index)
+        except ValueError:
+            # Si la note n'est pas dans le mapping visuel, retourner -1
+            return -1
+
     def move_up(self, event):
         """Déplace la sélection vers le haut dans la liste des notes"""
-        if self.notes and self.current_index > 0:
-            self.current_index -= 1
-            self.load_menu()
+        if not self.notes or not self.visual_to_index:
+            return
+
+        # Trouver la position visuelle actuelle
+        visual_pos = self.get_visual_position()
+
+        # Si la note n'est pas dans le mapping visuel ou est déjà en haut
+        if visual_pos <= 0:
+            return
+
+        # Déplacer vers le haut dans l'ordre visuel
+        new_visual_pos = visual_pos - 1
+        self.current_index = self.visual_to_index[new_visual_pos]
+        self.load_menu()
 
     def move_down(self, event):
         """Déplace la sélection vers le bas dans la liste des notes"""
-        if self.notes and self.current_index < len(self.notes) - 1:
-            self.current_index += 1
-            self.load_menu()
+        if not self.notes or not self.visual_to_index:
+            return
+
+        # Trouver la position visuelle actuelle
+        visual_pos = self.get_visual_position()
+
+        # Si la note n'est pas dans le mapping visuel ou est déjà en bas
+        if visual_pos < 0 or visual_pos >= len(self.visual_to_index) - 1:
+            return
+
+        # Déplacer vers le bas dans l'ordre visuel
+        new_visual_pos = visual_pos + 1
+        self.current_index = self.visual_to_index[new_visual_pos]
+        self.load_menu()
 
     def load_favorites(self):
         """Charge la liste des notes favorites depuis le fichier"""
@@ -551,12 +610,20 @@ class TerminalNotesApp:
 
     def create_new_note(self, event):
         """Crée une nouvelle note avec un nom basé sur la date et l'heure"""
-        # Format plus court mais toujours unique
-        timestamp = time.strftime("%m%d_%H%M")
+        # Format plus court mais toujours unique avec secondes pour éviter les doublons
+        timestamp = time.strftime("%m%d_%H%M%S")
         name = f"note_{timestamp}.txt"
 
+        # Vérifier si le fichier existe déjà et ajouter un suffixe si nécessaire
+        base_path = os.path.join(NOTES_DIR, name)
+        counter = 1
+        while os.path.exists(base_path):
+            name = f"note_{timestamp}_{counter}.txt"
+            base_path = os.path.join(NOTES_DIR, name)
+            counter += 1
+
         # Création du fichier vide
-        with open(os.path.join(NOTES_DIR, name), "w", encoding="utf-8") as f:
+        with open(base_path, "w", encoding="utf-8") as f:
             f.write("")
 
         # Mise à jour de la liste et sélection de la nouvelle note
